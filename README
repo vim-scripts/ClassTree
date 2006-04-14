@@ -1,0 +1,7 @@
+This is a mirror of http://www.vim.org/scripts/script.php?script_id=1518
+
+Define command "CTree" to display hierarchy of classes/interfaces defined
+
+You must build tag file using Exuberant Ctags with option "--fields=+i"
+
+Works for C#. Should work for Java and any other single-inheritance OO language.

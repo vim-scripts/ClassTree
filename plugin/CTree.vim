@@ -1,24 +1,23 @@
 command! -nargs=1 -complete=tag CTree call s:CTree_GetTypeTree(<f-args>)
+command! -nargs=0 CTreeReset let s:CTree_AllTypeEntries = []
+
 map <F9> <Esc>:exec "CTree ".expand("<cword>")<CR>
 
 let s:CTree_AllTypeEntries = []
 
-function! s:CTree_GetTypeTree(rootTypeName)
-    if empty(s:CTree_AllTypeEntries)
-        call s:CTree_LoadAllTypeEntries()
-    endif
+function! s:CTree_GetTypeTree(typeName)
+    call s:CTree_LoadAllTypeEntries()
 
-    let s:CTree_Depth = 0
-    let rootEntry = s:CTree_GetRootType(a:rootTypeName)
+    let rootEntry = s:CTree_GetRootType(a:typeName, '')
 
     if empty(rootEntry)
-        let rootEntry["name"] = a:rootTypeName
+        let rootEntry["name"] = a:typeName
         let rootEntry["namespace"] = ""
         let rootEntry["kind"] = 'c' 
         let rootEntry["inherits"] = ""
     endif
 
-    echohl Title | echo '  #  tag' | echohl None
+    echohl Title | echo '   #  tag' | echohl None
 
     let allEntries = []
     call s:CTree_GetChildren(allEntries, rootEntry, 0)
@@ -26,7 +25,7 @@ function! s:CTree_GetTypeTree(rootTypeName)
     let i = input('Choice number (<Enter> cancels):')
     let i = str2nr(i)
     if i > 0 && i <= len(allEntries)
-        call CT_Jump_To_Class(allEntries[i-1], "tselect")
+        call s:CT_Jump_To_Class(allEntries[i-1], "tselect")
     endif
 endfunction
 
@@ -56,8 +55,11 @@ function! s:CTree_GetChildren(allEntries, rootEntry, depth)
 endfunction
 
 function! s:CTree_LoadAllTypeEntries()
-    let s:CTree_AllTypeEntries = []
+    if !empty(s:CTree_AllTypeEntries)
+        return
+    endif
 
+    echo 'Loading tag information. It may take a while...'
     let ch = 'A'
     while ch <= 'Z'
         call s:CTree_GetTypeEntryWithCh(ch)
@@ -72,7 +74,7 @@ function! s:CTree_LoadAllTypeEntries()
         let ch = nr2char(char2nr(ch)+1)
     endwhile 
 
-    return s:CTree_AllTypeEntries
+     echo "Count of type tag entries loaded: ".len(s:CTree_AllTypeEntries)
 endfunction
 
 function! s:CTree_GetTypeEntryWithCh(ch)
@@ -84,23 +86,36 @@ function! s:CTree_GetTypeEntryWithCh(ch)
     endfor
 endfunction
 
-function! s:CTree_GetRootType(typeName)
-    let s:CTree_Depth = s:CTree_Depth + 1
+function! s:CTree_GetRootType(typeName, originalKind)
     for tagEntry in taglist("^".a:typeName."$")  
 
         let kind = tagEntry["kind"] 
-        if (kind != 'c' && kind != 'i') || (kind == 'i' && s:CTree_Depth != 1)
+        if kind != 'c' && kind != 'i'
             continue
         endif
 
-        "interface support multiple inheritance, so we will not try to get its
-        "parent 
-        if kind == 'i' || !has_key(tagEntry, "inherits")
+        let originalKind = a:originalKind
+        if originalKind == '' 
+            let originalKind = kind
+        elseif originalKind != tagEntry["kind"]
+            "We will not accept interface as a parent of class
+            return {}
+        endif
+
+        if !has_key(tagEntry, "inherits")
             return tagEntry
         endif
 
-        for parent in split(tagEntry["inherits"], ",")
-            let rootEntry = s:CTree_GetRootType(parent)
+        "interface support multiple inheritance, so we will not try to get its
+        "parent if it has more than one parent 
+        let parents = split(tagEntry["inherits"], ",")
+        if originalKind == 'i' && len(parents) > 1
+            return tagEntry
+        endif
+
+        for parent in parents 
+            let rootEntry = s:CTree_GetRootType(parent, originalKind)
+
             if !empty(rootEntry)
                 return rootEntry
             endif
@@ -136,7 +151,7 @@ function! s:CTree_DisplayTagEntry(index, typeEntry, depth)
     echo s
 endfunction
 
-function! CT_Jump_To_Class(tagEntry, cmd)
+function! s:CT_Jump_To_Class(tagEntry, cmd)
     let className = a:tagEntry["name"]
 
     redir @z
@@ -162,10 +177,10 @@ function! CT_Jump_To_Class(tagEntry, cmd)
     endif
 
     let i = 1
-    let idxstart = stridx( @z, GetIndexString(i) ) 
+    let idxstart = stridx( @z, s:GetIndexString(i) ) 
     while idxstart > 0 
         if @z[idxstart+9] =='c' || @z[idxstart+9] =='i'
-            let idxns = GetKeyValue(idxstart, keyName)
+            let idxns = s:GetKeyValue(idxstart, keyName)
             let idxnse = match( @z, " ", idxns)
             if idxnse > match( @z, "\n", idxns)
                 let idxnse = match( @z, "\n", idxns)
@@ -177,15 +192,15 @@ function! CT_Jump_To_Class(tagEntry, cmd)
             endif
         endif
         let i = i + 1
-        let idxstart = stridx( @z, GetIndexString(i) ) 
+        let idxstart = stridx( @z, s:GetIndexString(i) ) 
     endwhile
 endfunction
 
-function! GetKeyValue(idxstart, keyName)
+function! s:GetKeyValue(idxstart, keyName)
     if a:keyName == ""
-        let res = GetKeyValue(a:idxstart, "namespace:")
+        let res = s:GetKeyValue(a:idxstart, "namespace:")
         if res == -1 
-            res = GetKeyValue(a:idxstart, "calss:")
+            res = s:GetKeyValue(a:idxstart, "calss:")
         endif
     else
         let res = match( @z, a:keyName.":", a:idxstart) + strlen(a:keyName) + 1
@@ -193,7 +208,7 @@ function! GetKeyValue(idxstart, keyName)
     return res
 endfunction
 
-function! GetIndexString(index)
+function! s:GetIndexString(index)
     if a:index < 10
         return "\n  ".a:index." "
     elseif a:index < 100

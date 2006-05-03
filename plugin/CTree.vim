@@ -1,9 +1,36 @@
-command! -nargs=1 -complete=tag CTree call s:CTree_GetTypeTree(<f-args>)
-command! -nargs=0 CTreeReset let s:CTree_AllTypeEntries = []
+" -------------------------------------------------------------------
+"  CTree.vim -- Display Class/Interface Hierarchy "{{{
+"
+"  Author:   Yanbiao Zhao (yanbiao_zhao at yahoo.com)
+"  Requires: Vim 7
+"  Version:  1.1.1
+"
+"  Command:
+"      CTree -- Display a tree of Class/Interface hierarchy
+"      CTag  -- Jump to the class/interface definition of the tag
+"  }}}
 
-map <F9> <Esc>:exec "CTree ".expand("<cword>")<CR>
+if v:version < 700
+	echomsg "Vim 7 or higher is required for CTree.vim"
+	finish
+endif
+
+command! -nargs=1 -complete=tag CTree      call s:CTree_GetTypeTree(<f-args>)
+command! -nargs=1 -complete=tag CTag       call s:CT_Jump_To_ClassName(<f-args>)
+
+"Short cut to use the commands
+"nmap <silent> <M-F9>  :exec "CTree ".expand("<cword>")<CR>
+"nmap <silent> <M-]>   :exec "CTag  ".expand("<cword>")<CR>
+
+function! s:CT_Jump_To_ClassName(className)
+    let tagEntry = {}
+    let tagEntry["name"] = a:className 
+    call s:CT_Jump_To_Class(tagEntry, "tselect")
+endfunction
 
 let s:CTree_AllTypeEntries = []
+let s:CTree_TagEnvCache = ''
+let s:CTree_tagFilesCache = {}
 
 function! s:CTree_GetTypeTree(typeName)
     call s:CTree_LoadAllTypeEntries()
@@ -54,9 +81,49 @@ function! s:CTree_GetChildren(allEntries, rootEntry, depth)
     
 endfunction
 
+" Return if the tag env has changed
+function! s:HasTagEnvChanged()
+    if s:CTree_TagEnvCache == &tags
+        return 0
+    else
+        let s:CTree_TagEnvCache = &tags
+        return 1
+    endif
+endfunc
+
+" Return if a tag file has changed in tagfiles()
+function! s:HasTagFileChanged()
+    if s:HasTagEnvChanged()
+        let s:CTree_tagFilesCache = {}
+        return 1
+    endif
+
+    let tagFiles = map(tagfiles(), 'escape(v:val, " ")')
+    let result = 0
+    for tagFile in tagFiles
+        if has_key(s:CTree_tagFilesCache, tagFile)
+            let currentFiletime = getftime(tagFile)
+            if currentFiletime > s:CTree_tagFilesCache[tagFile]
+                " The file has changed, updating the cache
+                let s:CTree_tagFilesCache[tagFile] = currentFiletime
+                let result = 1
+            endif
+        else
+            " We store the time of the file
+            let s:CTree_tagFilesCache[tagFile] = getftime(tagFile)
+            let result = 1
+        endif
+    endfor
+    return result
+endfunc
+
 function! s:CTree_LoadAllTypeEntries()
-    if !empty(s:CTree_AllTypeEntries)
-        return
+    if !empty(s:CTree_AllTypeEntries) 
+        if s:HasTagFileChanged()
+            let s:CTree_AllTypeEntries = []
+        else
+            return
+        endif
     endif
 
     echo 'Loading tag information. It may take a while...'

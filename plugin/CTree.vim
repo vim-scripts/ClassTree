@@ -3,7 +3,7 @@
 "
 "  Author:   Yanbiao Zhao (yanbiao_zhao at yahoo.com)
 "  Requires: Vim 7
-"  Version:  1.1.1
+"  Version:  1.1.2
 "
 "  Command:
 "      CTree -- Display a tree of Class/Interface hierarchy
@@ -25,7 +25,9 @@ command! -nargs=1 -complete=tag CTag       call s:CT_Jump_To_ClassName(<f-args>)
 function! s:CT_Jump_To_ClassName(className)
     let tagEntry = {}
     let tagEntry["name"] = a:className 
-    call s:CT_Jump_To_Class(tagEntry, "tselect")
+    if s:CT_Jump_To_Class(tagEntry)== 0
+        echohl WarningMsg | echo 'tag not found: '.a:className | echohl None
+    endif
 endfunction
 
 let s:CTree_AllTypeEntries = []
@@ -52,7 +54,7 @@ function! s:CTree_GetTypeTree(typeName)
     let i = input('Choice number (<Enter> cancels):')
     let i = str2nr(i)
     if i > 0 && i <= len(allEntries)
-        call s:CT_Jump_To_Class(allEntries[i-1], "tselect")
+        call s:CT_Jump_To_Class(allEntries[i-1])
     endif
 endfunction
 
@@ -81,49 +83,36 @@ function! s:CTree_GetChildren(allEntries, rootEntry, depth)
     
 endfunction
 
-" Return if the tag env has changed
-function! s:HasTagEnvChanged()
-    if s:CTree_TagEnvCache == &tags
-        return 0
-    else
-        let s:CTree_TagEnvCache = &tags
-        return 1
-    endif
-endfunc
-
 " Return if a tag file has changed in tagfiles()
 function! s:HasTagFileChanged()
-    if s:HasTagEnvChanged()
-        let s:CTree_tagFilesCache = {}
-        return 1
+    let result = 0
+    let tagFiles = map(tagfiles(), 'escape(v:val, " ")')
+    let newTagFilesCache = {}
+
+    if len(tagFiles) != len(s:CTree_tagFilesCache)
+        let result = 1
     endif
 
-    let tagFiles = map(tagfiles(), 'escape(v:val, " ")')
-    let result = 0
     for tagFile in tagFiles
-        if has_key(s:CTree_tagFilesCache, tagFile)
-            let currentFiletime = getftime(tagFile)
-            if currentFiletime > s:CTree_tagFilesCache[tagFile]
-                " The file has changed, updating the cache
-                let s:CTree_tagFilesCache[tagFile] = currentFiletime
-                let result = 1
-            endif
-        else
-            " We store the time of the file
-            let s:CTree_tagFilesCache[tagFile] = getftime(tagFile)
+        let currentFiletime = getftime(tagFile)
+        let newTagFilesCache[tagFile] = currentFiletime
+
+        if !has_key(s:CTree_tagFilesCache, tagFile)
+            let result = 1
+        elseif currentFiletime != s:CTree_tagFilesCache[tagFile]
             let result = 1
         endif
     endfor
+
+    let s:CTree_tagFilesCache = newTagFilesCache
     return result
 endfunc
 
 function! s:CTree_LoadAllTypeEntries()
-    if !empty(s:CTree_AllTypeEntries) 
-        if s:HasTagFileChanged()
-            let s:CTree_AllTypeEntries = []
-        else
-            return
-        endif
+    if s:HasTagFileChanged()
+        let s:CTree_AllTypeEntries = []
+    else
+        return
     endif
 
     echo 'Loading tag information. It may take a while...'
@@ -218,16 +207,8 @@ function! s:CTree_DisplayTagEntry(index, typeEntry, depth)
     echo s
 endfunction
 
-function! s:CT_Jump_To_Class(tagEntry, cmd)
+function! s:CT_Jump_To_Class(tagEntry)
     let className = a:tagEntry["name"]
-
-    redir @z
-    try
-        exec "silent ".a:cmd." ".className
-    catch
-        echohl WarningMsg | echo "cannot find class ".className |echohl None
-    endtry
-    redir END
 
     if has_key(a:tagEntry, "namespace")
         let keyName = "namespace"
@@ -244,43 +225,16 @@ function! s:CT_Jump_To_Class(tagEntry, cmd)
     endif
 
     let i = 1
-    let idxstart = stridx( @z, s:GetIndexString(i) ) 
-    while idxstart > 0 
-        if @z[idxstart+9] =='c' || @z[idxstart+9] =='i'
-            let idxns = s:GetKeyValue(idxstart, keyName)
-            let idxnse = match( @z, " ", idxns)
-            if idxnse > match( @z, "\n", idxns)
-                let idxnse = match( @z, "\n", idxns)
-            endif
-
-            if namespace == "" || namespace == strpart( @z, idxns, idxnse - idxns)
+    let entries = taglist('^'.className.'$')
+    for entry in entries 
+        let kind = entry["kind"]
+        if kind == 'c' || kind == 'i' || kind == 'g'
+            if namespace == "" || namespace == entry[keyName]
                 exec "silent ".i."tag ".className
-                return
+                return 1
             endif
         endif
-        let i = i + 1
-        let idxstart = stridx( @z, s:GetIndexString(i) ) 
-    endwhile
-endfunction
-
-function! s:GetKeyValue(idxstart, keyName)
-    if a:keyName == ""
-        let res = s:GetKeyValue(a:idxstart, "namespace:")
-        if res == -1 
-            res = s:GetKeyValue(a:idxstart, "calss:")
-        endif
-    else
-        let res = match( @z, a:keyName.":", a:idxstart) + strlen(a:keyName) + 1
-    endif
-    return res
-endfunction
-
-function! s:GetIndexString(index)
-    if a:index < 10
-        return "\n  ".a:index." "
-    elseif a:index < 100
-        return "\n ".a:index." "
-    else 
-        return "\n".a:index." "
-    endif
+        let i += 1
+    endfor
+    return 0
 endfunction
